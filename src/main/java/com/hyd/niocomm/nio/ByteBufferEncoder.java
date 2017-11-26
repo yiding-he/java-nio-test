@@ -1,7 +1,10 @@
-package com.hyd.niocomm;
+package com.hyd.niocomm.nio;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
+import com.hyd.niocomm.Bytes;
+import com.hyd.niocomm.Request;
+import com.hyd.niocomm.Response;
 import com.hyd.niocomm.server.ServerException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -107,7 +110,7 @@ public class ByteBufferEncoder {
 
     /////////////////////////////////////////////// response encoding/decoding
 
-    public static ByteBuffer encode(Response response) {
+    public static ByteBuffer fromResponse(Response response) {
         byte[] bytes = encodeResponse(response);
         return bytes2Buffer(bytes);
     }

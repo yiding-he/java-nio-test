@@ -1,4 +1,8 @@
-package com.hyd.niocomm;
+package com.hyd.niocomm.server;
+
+import com.hyd.niocomm.Request;
+import com.hyd.niocomm.Response;
+import com.hyd.niocomm.nio.ByteBufferEncoder;
 
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
@@ -42,7 +46,7 @@ public class RequestContext {
 
     public ByteBuffer responseToByteBuffer() {
         if (this.byteBuffer == null) {
-            this.byteBuffer = ByteBufferEncoder.encode(this.response);
+            this.byteBuffer = ByteBufferEncoder.fromResponse(this.response);
         }
 
         return this.byteBuffer;

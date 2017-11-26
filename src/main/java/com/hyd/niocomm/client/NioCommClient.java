@@ -1,13 +1,16 @@
 package com.hyd.niocomm.client;
 
+import com.hyd.niocomm.Id;
 import com.hyd.niocomm.Request;
 import com.hyd.niocomm.Response;
+import com.hyd.niocomm.nio.ByteBufferEncoder;
+import com.hyd.niocomm.nio.SocketChannelReader;
+import com.hyd.niocomm.server.RequestContext;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.channels.SocketChannel;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -16,11 +19,7 @@ import java.util.concurrent.TimeoutException;
  */
 public class NioCommClient implements Closeable {
 
-    private SocketSelector socketSelector;
-
-    private ResponseReader responseReader;
-
-    private RequestWriter requestWriter;
+    private SocketChannelClientHandler socketChannelClientHandler;
 
     private WaitRoom waitRoom = new WaitRoom();
 
@@ -31,42 +30,45 @@ public class NioCommClient implements Closeable {
         clientConfig.addAddress(serverHost, serverPort);
         this.clientConfig = clientConfig;
 
-        initSocketSelector();
+        initComponents();
     }
 
     public NioCommClient(ClientConfig clientConfig) {
         this.clientConfig = clientConfig;
-        initSocketSelector();
+        initComponents();
     }
 
-    private void initSocketSelector() {
-        if (this.socketSelector != null) {
+    private void initComponents() {
+
+        if (this.socketChannelClientHandler != null) {
             return;
         }
 
-        this.responseReader = new ResponseReader();
-        this.requestWriter = new RequestWriter();
+        this.socketChannelClientHandler = new SocketChannelClientHandler();
 
-        this.socketSelector = new SocketSelector();
-        this.socketSelector.start(this.clientConfig.isDaemon());
-        this.socketSelector.setOnReadable(this.responseReader::readResponse);
-        this.socketSelector.setOnWritable(this.requestWriter::writeRequest);
+        SocketChannelReader<Response> socketChannelReader = this.socketChannelClientHandler.getSocketChannelReader();
+        socketChannelReader.setDecoder(ByteBufferEncoder::decodeResponse);
+        socketChannelReader.setOnMessageDecoded(this::onMessageDecoded);
 
-        this.requestWriter.setSelector(this.socketSelector);
-        this.requestWriter.setOnRequestEnqueued(this.waitRoom::setWait);
-        this.requestWriter.setOnRequestError(this.waitRoom::clear);
+        this.socketChannelClientHandler.start(this.clientConfig.isDaemon());
+    }
 
-        this.responseReader.setOnResponseReady(this.waitRoom::setProceed);
+    private void onMessageDecoded(SocketChannel socketChannel, Response response) {
+        this.waitRoom.setProceed(response);
     }
 
     public Response call(Request request) throws ClientException {
 
+        request.setSequence(Id.next());
         ResponseFutureTask responseFuture = null;
 
         try {
-            SocketChannel socketChannel = socketSelector.openSocketChannel(clientConfig.pickAddress());
-            responseFuture = this.requestWriter.push(socketChannel, request);
+            this.pushRequest(request);
+
+            responseFuture = new ResponseFutureTask(request.getSequence());
+            this.waitRoom.setWait(responseFuture);
             return responseFuture.get(this.clientConfig.getTimeoutMillis(), TimeUnit.MILLISECONDS);
+
         } catch (IOException | InterruptedException | ExecutionException | TimeoutException e) {
             throw new ClientException(e);
         } finally {
@@ -76,8 +78,20 @@ public class NioCommClient implements Closeable {
         }
     }
 
+    private void pushRequest(Request request) throws IOException {
+        SocketChannel socketChannel = socketChannelClientHandler
+                .openSocketChannel(clientConfig.pickAddress());
+
+
+        RequestContext requestContext = new RequestContext();
+        requestContext.setSocketChannel(socketChannel);
+        requestContext.setRequest(request);
+
+        this.socketChannelClientHandler.push(requestContext);
+    }
+
     @Override
     public void close() throws IOException {
-        this.socketSelector.close();
+        this.socketChannelClientHandler.close();
     }
 }

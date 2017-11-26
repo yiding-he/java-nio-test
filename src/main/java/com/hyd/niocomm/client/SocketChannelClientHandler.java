@@ -1,7 +1,10 @@
 package com.hyd.niocomm.client;
 
-import com.hyd.niocomm.Request;
+import com.hyd.niocomm.Response;
 import com.hyd.niocomm.SocketChannelWrapper;
+import com.hyd.niocomm.nio.SocketChannelReader;
+import com.hyd.niocomm.nio.SocketChannelWriter;
+import com.hyd.niocomm.server.RequestContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -14,7 +17,6 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.Iterator;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.function.Consumer;
 
 import static java.nio.channels.SelectionKey.OP_CONNECT;
 import static java.nio.channels.SelectionKey.OP_READ;
@@ -22,25 +24,23 @@ import static java.nio.channels.SelectionKey.OP_READ;
 /**
  * @author yiding_he
  */
-public class SocketSelector implements Closeable {
+public class SocketChannelClientHandler implements Closeable {
 
-    private static final Logger LOG = LoggerFactory.getLogger(SocketSelector.class);
+    private static final Logger LOG = LoggerFactory.getLogger(SocketChannelClientHandler.class);
 
     private Selector selector;
 
     private boolean closed = false;
 
-    private Consumer<SelectionKey> onReadable;
+    private SocketChannelReader<Response> socketChannelReader = new SocketChannelReader<>();
 
-    private Consumer<SocketChannelWrapper<Request>> onWritable;
-
-    private ConcurrentLinkedQueue<SocketChannelWrapper<Request>> requestQueue = new ConcurrentLinkedQueue<>();
+    private SocketChannelWriter socketChannelWriter = new SocketChannelWriter();
 
     private ConcurrentLinkedQueue<SocketChannelWrapper<Integer>> registerQueue = new ConcurrentLinkedQueue<>();
 
     private SocketChannel clientSocketChannel;
 
-    public SocketSelector() throws ClientException {
+    public SocketChannelClientHandler() throws ClientException {
         try {
             this.selector = Selector.open();
         } catch (IOException e) {
@@ -48,12 +48,12 @@ public class SocketSelector implements Closeable {
         }
     }
 
-    public void setOnWritable(Consumer<SocketChannelWrapper<Request>> onWritable) {
-        this.onWritable = onWritable;
+    public SocketChannelReader<Response> getSocketChannelReader() {
+        return socketChannelReader;
     }
 
-    public void setOnReadable(Consumer<SelectionKey> onReadable) {
-        this.onReadable = onReadable;
+    public SocketChannelWriter getSocketChannelWriter() {
+        return socketChannelWriter;
     }
 
     public void start(boolean daemon) {
@@ -89,9 +89,7 @@ public class SocketSelector implements Closeable {
                 }
 
                 if (key.isReadable()) {
-                    if (this.onReadable != null) {  // 这个地方始终无法达到
-                        this.onReadable.accept(key);
-                    }
+                    this.socketChannelReader.readFromKey(key);
                 }
             }
         }
@@ -99,18 +97,7 @@ public class SocketSelector implements Closeable {
 
     private void processQueues() throws IOException {
 
-        if (this.clientSocketChannel != null) {
-            while (!this.clientSocketChannel.finishConnect()) {
-
-            }
-
-            if (this.onWritable != null) {
-                SocketChannelWrapper<Request> wrapper;
-                while ((wrapper = this.requestQueue.poll()) != null) {
-                    this.onWritable.accept(wrapper);
-                }
-            }
-        }
+        this.socketChannelWriter.writeRequest();
 
         SocketChannelWrapper<Integer> register;
         while ((register = this.registerQueue.poll()) != null) {
@@ -143,14 +130,14 @@ public class SocketSelector implements Closeable {
         return this.clientSocketChannel;
     }
 
-    public void push(SocketChannel socketChannel, Request request) {
-        this.requestQueue.offer(new SocketChannelWrapper<>(request, socketChannel));
-        this.selector.wakeup();
-    }
-
     @Override
     public void close() throws IOException {
         this.closed = true;
+        this.selector.wakeup();
+    }
+
+    public void push(RequestContext requestContext) {
+        this.socketChannelWriter.push(requestContext);
         this.selector.wakeup();
     }
 }

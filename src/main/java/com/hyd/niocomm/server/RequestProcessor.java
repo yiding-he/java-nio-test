@@ -1,7 +1,6 @@
 package com.hyd.niocomm.server;
 
 import com.hyd.niocomm.Request;
-import com.hyd.niocomm.RequestContext;
 import com.hyd.niocomm.Response;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

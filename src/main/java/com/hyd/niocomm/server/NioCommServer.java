@@ -1,20 +1,19 @@
 package com.hyd.niocomm.server;
 
 import com.hyd.niocomm.CloseableUtils;
-import com.hyd.niocomm.RequestContext;
+import com.hyd.niocomm.Request;
+import com.hyd.niocomm.nio.ByteBufferEncoder;
+
+import java.nio.channels.SocketChannel;
 
 /**
  * @author yidin
  */
 public class NioCommServer {
 
-    private SocketAcceptor socketAcceptor;
+    private SocketChannelServerHandler socketChannelServerHandler;
 
     private RequestProcessor requestProcessor;
-
-    private RequestReader requestReader = new RequestReader();
-
-    private ResponseWriter responseWriter = new ResponseWriter();
 
     ///////////////////////////////////////////////
 
@@ -32,20 +31,17 @@ public class NioCommServer {
 
     private void initComponents(ServerConfig serverConfig) {
 
-        this.requestReader.setOnRequestReady(this::processRequest);
-
-        this.socketAcceptor = new SocketAcceptor(serverConfig);
-        this.socketAcceptor.setOnReadable(this.requestReader::readData);
-        this.socketAcceptor.setOnWritable(this.responseWriter::writeData);
-
+        this.socketChannelServerHandler = new SocketChannelServerHandler(serverConfig);
         this.requestProcessor = new RequestProcessor(serverConfig);
-        this.requestProcessor.setOnResponseReady(this.responseWriter::push);
-    }
 
-    private void processRequest(RequestContext requestContext) {
-        if (this.requestProcessor != null) {
-            this.requestProcessor.processRequest(requestContext);
-        }
+        this.socketChannelServerHandler.getSocketChannelReader()
+                .setDecoder(ByteBufferEncoder::decodeRequest);
+
+        this.socketChannelServerHandler.getSocketChannelReader()
+                .setOnMessageDecoded(this::onMessageDecoded);
+
+        this.requestProcessor.setOnResponseReady(
+                this.socketChannelServerHandler::push);
     }
 
     public void setHandler(String path, Handler handler) {
@@ -53,21 +49,24 @@ public class NioCommServer {
     }
 
     public void start() {
-        if (this.socketAcceptor.isRunning()) {
+        if (this.socketChannelServerHandler.isRunning()) {
             return;
         }
 
-        this.socketAcceptor.start();
-        this.responseWriter.setSocketAcceptor(this.socketAcceptor);
+        this.socketChannelServerHandler.start();
     }
 
     public void stop() {
         CloseableUtils.close(
-                this.socketAcceptor,
-                this.requestReader,
-                this.requestProcessor,
-                this.responseWriter
+                this.socketChannelServerHandler,
+                this.requestProcessor
         );
     }
 
+    private void onMessageDecoded(SocketChannel channel, Request request) {
+        RequestContext requestContext = new RequestContext();
+        requestContext.setSocketChannel(channel);
+        requestContext.setRequest(request);
+        this.requestProcessor.processRequest(requestContext);
+    }
 }
