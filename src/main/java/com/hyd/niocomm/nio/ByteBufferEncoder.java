@@ -81,7 +81,7 @@ public class ByteBufferEncoder {
 
         ZipInputStream zipInputStream = new ZipInputStream(new ByteArrayInputStream(zippedBytes));
         ZipEntry zipEntry;
-        Request request = new Request();
+        Request request = new Request(null);
 
         try {
             while ((zipEntry = zipInputStream.getNextEntry()) != null) {

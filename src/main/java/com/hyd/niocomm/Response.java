@@ -46,4 +46,9 @@ public class Response {
     public void setData(JSONObject data) {
         this.data = data;
     }
+
+    public Response set(String propName, Object propValue) {
+        this.data.put(propName, propValue);
+        return this;
+    }
 }

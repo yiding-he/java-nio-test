@@ -13,11 +13,16 @@ public class NioCommClientTest {
         clientConfig.addAddress("localhost", 3333);
 
         NioCommClient client = new NioCommClient(clientConfig);
-        Request request = new Request();
-        request.setPath("/time/now");
-        Response response = client.call(request);
-        System.out.println(response.getData().getString("now"));
+
+        new Thread(() -> call(client, 1)).start();
+        new Thread(() -> call(client, 2)).start();
+        new Thread(() -> call(client, 3)).start();
 
         client.close();
+    }
+
+    private static void call(NioCommClient client, int delaySeconds) {
+        Response response = client.call(new Request("/time/now").setParam("delaySeconds", delaySeconds));
+        System.out.println(response.getData().getInteger("delaySeconds") + " responded.");
     }
 }

@@ -1,7 +1,6 @@
 package com.hyd.niocomm.client;
 
 import com.hyd.niocomm.Response;
-import com.hyd.niocomm.SocketChannelWrapper;
 import com.hyd.niocomm.nio.SocketChannelReader;
 import com.hyd.niocomm.nio.SocketChannelWriter;
 import com.hyd.niocomm.server.RequestContext;
@@ -15,8 +14,10 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
+import java.util.HashMap;
 import java.util.Iterator;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static java.nio.channels.SelectionKey.OP_CONNECT;
 import static java.nio.channels.SelectionKey.OP_READ;
@@ -32,12 +33,25 @@ public class SocketChannelClientHandler implements Closeable {
 
     private boolean closed = false;
 
+    /**
+     * 执行写入的类
+     */
     private SocketChannelReader<Response> socketChannelReader = new SocketChannelReader<>();
 
+    /**
+     * 执行读取的类
+     */
     private SocketChannelWriter socketChannelWriter = new SocketChannelWriter();
 
-    private ConcurrentLinkedQueue<SocketChannelWrapper<Integer>> registerQueue = new ConcurrentLinkedQueue<>();
+    /**
+     * 注册 selector 的队列。不能在外部线程直接注册 selector，那样会导致该线程挂起。注册只能在 selector
+     * 线程来做，外部线程要做的就是：1）将要注册的 SocketChannel 放入这个 map；2）调用 selector 的 wakeup() 方法。
+     */
+    private final Map<SocketChannel, Integer> registerPendingMap = new ConcurrentHashMap<>();
 
+    /**
+     * 连接服务器的 SocketChannel
+     */
     private SocketChannel clientSocketChannel;
 
     public SocketChannelClientHandler() throws ClientException {
@@ -56,12 +70,17 @@ public class SocketChannelClientHandler implements Closeable {
         return socketChannelWriter;
     }
 
+    /**
+     * 启动 selector 线程
+     *
+     * @param daemon 是否当进程退出时自动结束线程
+     */
     public void start(boolean daemon) {
         Thread selectorThread = new Thread(() -> {
             try {
                 start0();
             } catch (IOException e) {
-                LOG.error("Error running selector");
+                LOG.error("Error running selector", e);
             }
         });
         selectorThread.setDaemon(daemon);
@@ -97,21 +116,27 @@ public class SocketChannelClientHandler implements Closeable {
 
     private void processQueues() throws IOException {
 
+        // process write queue
         this.socketChannelWriter.writeRequest();
 
-        SocketChannelWrapper<Integer> register;
-        while ((register = this.registerQueue.poll()) != null) {
-            SocketChannel socketChannel = register.getSocketChannel();
+        // process register queue
+        Map<SocketChannel, Integer> pendingMap;
+        synchronized (this.registerPendingMap) {
+            pendingMap = new HashMap<>(this.registerPendingMap);
+            this.registerPendingMap.clear();
+        }
+
+        pendingMap.forEach(((socketChannel, interest) -> {
             try {
-                socketChannel.register(this.selector, register.getValue());
+                socketChannel.register(this.selector, interest);
                 LOG.info("SocketChannel registered.");
             } catch (ClosedChannelException e) {
                 LOG.error("", e);
             }
-        }
+        }));
     }
 
-    public SocketChannel openSocketChannel(Address address) throws IOException {
+    public synchronized SocketChannel openSocketChannel(Address address) throws IOException {
 
         if (this.clientSocketChannel != null && this.clientSocketChannel.isOpen()) {
             return this.clientSocketChannel;
@@ -120,11 +145,16 @@ public class SocketChannelClientHandler implements Closeable {
         SocketChannel socketChannel = SocketChannel.open();
         socketChannel.configureBlocking(false);
 
-        registerQueue.offer(new SocketChannelWrapper<>(OP_CONNECT | OP_READ, socketChannel));
+        this.registerPendingMap.put(socketChannel, OP_CONNECT | OP_READ);
         this.selector.wakeup();
 
         LOG.info("Connecting to " + address + "...");
         socketChannel.connect(new InetSocketAddress(address.getHost(), address.getPort()));
+
+        while (!socketChannel.finishConnect()) {
+
+        }
+        LOG.info("Connected.");
 
         this.clientSocketChannel = socketChannel;
         return this.clientSocketChannel;

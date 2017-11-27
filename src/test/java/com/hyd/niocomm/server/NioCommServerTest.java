@@ -1,8 +1,5 @@
 package com.hyd.niocomm.server;
 
-import com.hyd.niocomm.DemoHandler;
-import com.hyd.niocomm.server.NioCommServer;
-
 /**
  * @author yidin
  */
